@@ -1,0 +1,51 @@
+[project]
+name = "llm-batch-py"
+version = "0.1.0"
+description = "Cron-friendly batch LLM processing for Polars."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.67.0",
+    "fsspec>=2024.12.0",
+    "openai>=1.109.1",
+    "orjson>=3.10.16",
+    "polars>=1.33.0",
+    "pyarrow>=19.0.1",
+    "pydantic>=2.11.1",
+    "s3fs>=2024.12.0",
+    "tiktoken>=0.9.0",
+]
+
+[build-system]
+requires = ["maturin>=1.8,<2.0"]
+build-backend = "maturin"
+
+[dependency-groups]
+dev = [
+    "maturin>=1.8,<2.0",
+    "pytest>=8.3.5",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.11.0",
+]
+
+[tool.maturin]
+module-name = "llm_batch_py._core"
+python-source = "src"
+manifest-path = "Cargo.toml"
+features = ["pyo3/extension-module"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "I",
+    "B",
+    "UP",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
