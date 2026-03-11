@@ -8,9 +8,20 @@ from time import perf_counter
 import polars as pl
 from pydantic import BaseModel
 
-from llm_batch_py import BatchConfig, CacheStoreConfig, OpenAIConfig, StructuredOutputJob, prompt_udf
+from llm_batch_py import (
+    BatchConfig,
+    CacheStoreConfig,
+    OpenAIConfig,
+    StructuredOutputJob,
+    prompt_udf,
+)
 from llm_batch_py._core_wrapper import canonical_json, jsonl_dump_bytes
-from llm_batch_py.catalog import MANIFEST_BATCHES, MANIFEST_REQUESTS, MANIFEST_RESULTS, ParquetCatalog
+from llm_batch_py.catalog import (
+    MANIFEST_BATCHES,
+    MANIFEST_REQUESTS,
+    MANIFEST_RESULTS,
+    ParquetCatalog,
+)
 from llm_batch_py.providers.base import PreparedRequest
 from llm_batch_py.runner import Runner
 
@@ -170,7 +181,9 @@ def benchmark(rows: int) -> list[PhaseResult]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Benchmark llm-batch-py local throughput hot paths.")
+    parser = argparse.ArgumentParser(
+        description="Benchmark llm-batch-py local throughput hot paths."
+    )
     parser.add_argument("--rows", type=int, default=100_000, help="Number of rows to benchmark.")
     args = parser.parse_args()
 

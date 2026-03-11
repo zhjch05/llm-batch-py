@@ -284,7 +284,9 @@ class Runner:
             if result and self._should_hold_failure(
                 result, retry_counts[request.cache_key], job.batch.max_retries
             ):
-                row_states[request.cache_key] = self._failed_row_state(job, adapter, request, result)
+                row_states[request.cache_key] = self._failed_row_state(
+                    job, adapter, request, result
+                )
                 failed_rows += 1
                 continue
             pending = pending_requests.get(request.cache_key)
@@ -587,7 +589,10 @@ class Runner:
         batch_id = batch_id or new_batch_id()
         transport_records = [request.transport_record for request in requests]
         transport_record_json_by_request_id = {
-            request.request.request_id: canonical_json(request.transport_record) for request in requests
+            request.request.request_id: canonical_json(
+                request.transport_record
+            )
+            for request in requests
         }
         request_payload = jsonl_dump_bytes(transport_records)
         if artifact_uri is None:
