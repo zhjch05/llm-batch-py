@@ -117,6 +117,10 @@ config = ResultCacheStoreConfig(
 
 Accepted `storage_options` keys are defined by the underlying filesystem backend. For S3, `s3fs` is the source of truth.
 
+For a full private-S3 guide covering required credentials, required object-store permissions, and S3-compatible endpoint caveats, see [S3 cache storage guide](./s3-cache-storage.md).
+
+If you configure a custom `endpoint_url`, `llm-batch-py` rejects job locking by default unless you opt into `LockConfig(allow_unsafe_s3_compatible_locks=True)`. That safeguard exists because the lock protocol depends on AWS S3 exclusive-create semantics.
+
 ## What Gets Stored
 
 The result cache catalog persists:

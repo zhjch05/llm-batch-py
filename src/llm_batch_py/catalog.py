@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 import fsspec
@@ -86,6 +87,7 @@ class ParquetCatalog:
             return handle.read().decode("utf-8")
 
     def acquire_lock(self, job_name: str, run_id: str) -> LockHandle:
+        self._validate_lock_backend()
         path = self._path("locks", f"{job_name}.json")
         parent = str(PurePosixPath(path).parent)
         self.fs.makedirs(parent, exist_ok=True)
@@ -215,6 +217,46 @@ class ParquetCatalog:
         except FileNotFoundError:
             return False
         return True
+
+    def _validate_lock_backend(self) -> None:
+        protocol = self.fs.protocol
+        if isinstance(protocol, tuple):
+            protocol = protocol[0]
+        if protocol != "s3":
+            return
+
+        endpoint_url = self._configured_s3_endpoint_url()
+        if endpoint_url is None or self._is_known_aws_s3_endpoint(endpoint_url):
+            return
+        if self.lock_config.allow_unsafe_s3_compatible_locks:
+            return
+
+        raise RuntimeError(
+            "Job locking for s3:// result caches requires AWS S3 semantics. "
+            f"This config sets endpoint_url={endpoint_url!r}, which may not honor "
+            "exclusive-create lock files safely. Use AWS S3, serialize runs "
+            "outside llm-batch-py, or set "
+            "LockConfig(allow_unsafe_s3_compatible_locks=True) to bypass this safeguard."
+        )
+
+    def _configured_s3_endpoint_url(self) -> str | None:
+        options = self.config.storage_options or {}
+        endpoint_url = options.get("endpoint_url")
+        if isinstance(endpoint_url, str) and endpoint_url:
+            return endpoint_url
+
+        client_kwargs = options.get("client_kwargs")
+        if isinstance(client_kwargs, dict):
+            candidate = client_kwargs.get("endpoint_url")
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return None
+
+    def _is_known_aws_s3_endpoint(self, endpoint_url: str) -> bool:
+        hostname = urlparse(endpoint_url).hostname
+        if hostname is None:
+            hostname = endpoint_url.split("/", 1)[0].split(":", 1)[0]
+        return hostname.endswith("amazonaws.com") or hostname.endswith("amazonaws.com.cn")
 
 
 def new_batch_id() -> str:

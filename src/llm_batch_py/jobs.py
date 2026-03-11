@@ -29,6 +29,7 @@ ResultCacheConfig = ResultCacheStoreConfig
 @dataclass(frozen=True)
 class LockConfig:
     ttl_seconds: int = 3600
+    allow_unsafe_s3_compatible_locks: bool = False
 
 
 @dataclass(frozen=True)

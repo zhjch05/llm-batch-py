@@ -122,6 +122,31 @@ result_cache = ResultCacheStoreConfig(
 )
 ```
 
+For a private AWS S3 bucket, the cache store can authenticate with any normal `s3fs` credential path:
+
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+- optional `AWS_SESSION_TOKEN`
+- `AWS_PROFILE`
+- an attached IAM role
+
+If you want explicit credentials in code:
+
+```python
+result_cache = ResultCacheStoreConfig(
+    root_uri="s3://my-bucket/llm_batch_py-prod",
+    storage_options={
+        "key": "AWS_ACCESS_KEY_ID",
+        "secret": "AWS_SECRET_ACCESS_KEY",
+        "token": "AWS_SESSION_TOKEN",
+        "client_kwargs": {"region_name": "us-west-2"},
+    },
+)
+```
+
+The cache principal needs list, read, write, and delete access under the configured prefix because `llm-batch-py` lists manifests, reads and writes artifacts, and creates and removes lock files there.
+
+If you point `storage_options` at a custom S3-compatible `endpoint_url`, `llm-batch-py` now rejects job locking by default because the lock protocol depends on AWS S3 exclusive-create semantics. Only bypass that with `LockConfig(allow_unsafe_s3_compatible_locks=True)` if you already serialize runners externally and accept possible cache corruption risk.
+
 `structured_template(...)` and `embedding_template(...)` are the primary prompt-building APIs. They render `{{ row.field }}` placeholders through the Rust template engine for lower per-row overhead.
 
 `prompt_udf(...)` remains supported as a compatibility fallback when templating is not expressive enough. A `prompt_udf` should return structured Python data such as dicts, lists, Pydantic models, and datetime-like values. `llm-batch-py` canonically serializes the rendered payload before computing result-cache keys, so dict insertion order does not affect cache hits.
@@ -135,6 +160,7 @@ If you do not need the full metadata surface on the returned frame, pass `metada
 - [Prompt building guide](./docs/prompt-building.md)
 - [Provider config reference](./docs/provider-configs.md)
 - [Result cache guide](./docs/result-cache.md)
+- [S3 cache storage guide](./docs/s3-cache-storage.md)
 - [Prompt caching guide](./docs/prompt-caching.md)
 - [Locking guide](./docs/locking.md)
 - [Batching guide](./docs/batching.md)
@@ -228,6 +254,9 @@ result_cache = ResultCacheStoreConfig(
 ```
 
 - `root_uri`: base location for manifests, raw artifacts, and reusable cached results. This can be a local path like `"./.llm_batch_py"` or any `fsspec` URI such as `s3://...`.
+- `storage_options`: optional `fsspec` / `s3fs` filesystem options such as `profile`, `key`, `secret`, `token`, `client_kwargs.region_name`, or `client_kwargs.endpoint_url`.
+
+For private S3-backed cache stores, see the [S3 cache storage guide](./docs/s3-cache-storage.md).
 
 ### Default result cache key
 
@@ -268,6 +297,9 @@ lock = LockConfig(ttl_seconds=6 * 60 * 60)
 ```
 
 - `ttl_seconds`: if a previous run left a lock behind and it is older than this TTL, a new run can reclaim it. Default: `3600`.
+- `allow_unsafe_s3_compatible_locks`: bypasses the safeguard that rejects custom S3-compatible `endpoint_url` lock backends. Default: `False`.
+
+`allow_unsafe_s3_compatible_locks=True` does not make S3-compatible locking safe. It only suppresses the fail-fast guard for users who already serialize runners externally.
 
 If you mean provider prompt caching rather than the `llm-batch-py` result cache store, configure that on the job:
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from unittest.mock import Mock, patch
 
 import polars as pl
+import pytest
 
 from llm_batch_py.catalog import MANIFEST_BATCHES, ParquetCatalog
 from llm_batch_py.jobs import LockConfig, ResultCacheStoreConfig
@@ -186,3 +188,86 @@ def test_acquire_lock_reclaims_stale_entry(tmp_path) -> None:
     with catalog.fs.open(lock_path, "rb") as handle:
         payload = json.loads(handle.read().decode("utf-8"))
     assert payload["run_id"] == "run-2"
+
+
+def test_catalog_rejects_unsafe_s3_compatible_locking() -> None:
+    fs = Mock()
+    fs.protocol = "s3"
+
+    with patch(
+        "llm_batch_py.catalog.fsspec.core.url_to_fs",
+        return_value=(fs, "bucket/prefix"),
+    ):
+        catalog = ParquetCatalog(
+            ResultCacheStoreConfig(
+                root_uri="s3://bucket/prefix",
+                storage_options={
+                    "key": "access",
+                    "secret": "secret",
+                    "client_kwargs": {"endpoint_url": "https://minio.internal.example"},
+                },
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="allow_unsafe_s3_compatible_locks=True"):
+        catalog.acquire_lock("job", "run-1")
+
+
+def test_catalog_allows_opt_in_for_s3_compatible_locking() -> None:
+    fs = Mock()
+    fs.protocol = "s3"
+    fs.makedirs = Mock()
+    fs.open.return_value = io.BytesIO()
+
+    with patch(
+        "llm_batch_py.catalog.fsspec.core.url_to_fs",
+        return_value=(fs, "bucket/prefix"),
+    ):
+        catalog = ParquetCatalog(
+            ResultCacheStoreConfig(
+                root_uri="s3://bucket/prefix",
+                storage_options={
+                    "key": "access",
+                    "secret": "secret",
+                    "client_kwargs": {"endpoint_url": "https://minio.internal.example"},
+                },
+            ),
+            LockConfig(allow_unsafe_s3_compatible_locks=True),
+        )
+
+    lock = catalog.acquire_lock("job", "run-1")
+
+    assert lock.run_id == "run-1"
+    fs.makedirs.assert_called_once()
+    fs.open.assert_called_once()
+
+
+def test_catalog_allows_known_aws_s3_endpoint_locking() -> None:
+    fs = Mock()
+    fs.protocol = "s3"
+    fs.makedirs = Mock()
+    fs.open.return_value = io.BytesIO()
+
+    with patch(
+        "llm_batch_py.catalog.fsspec.core.url_to_fs",
+        return_value=(fs, "bucket/prefix"),
+    ):
+        catalog = ParquetCatalog(
+            ResultCacheStoreConfig(
+                root_uri="s3://bucket/prefix",
+                storage_options={
+                    "key": "access",
+                    "secret": "secret",
+                    "client_kwargs": {
+                        "endpoint_url": "https://s3.us-west-2.amazonaws.com",
+                        "region_name": "us-west-2",
+                    },
+                },
+            )
+        )
+
+    lock = catalog.acquire_lock("job", "run-1")
+
+    assert lock.run_id == "run-1"
+    fs.makedirs.assert_called_once()
+    fs.open.assert_called_once()

@@ -11,16 +11,20 @@ from llm_batch_py import LockConfig
 
 LockConfig(
     ttl_seconds=3600,
+    allow_unsafe_s3_compatible_locks=False,
 )
 ```
 
 Options:
 
 - `ttl_seconds: int = 3600`
+- `allow_unsafe_s3_compatible_locks: bool = False`
 
 ## Behavior
 
 If a prior run exits unexpectedly and leaves a lock behind, a later run can reclaim that lock once it is older than `ttl_seconds`.
+
+For `s3://...` result caches, lock files rely on exclusive-create semantics. `llm-batch-py` treats AWS S3 as the supported remote lock backend. If you set a custom S3-compatible `endpoint_url`, lock acquisition now fails fast unless you opt into `allow_unsafe_s3_compatible_locks=True`.
 
 Use a larger TTL when:
 
@@ -58,6 +62,16 @@ Example:
 - choose `ttl_seconds` around 15 to 30 minutes
 
 If you set TTL too short, a still-running invocation can be treated as stale and another process can reclaim the lock early.
+
+### S3-Compatible Endpoints
+
+Use extreme caution with non-AWS S3 endpoints. `allow_unsafe_s3_compatible_locks=True` only bypasses the guardrail. It does not add a stronger distributed lock primitive.
+
+If you use that escape hatch:
+
+- serialize runners outside `llm-batch-py`
+- avoid overlapping cron or worker executions against the same cache prefix
+- treat lock-file races and cache corruption as your responsibility to prevent
 
 ## Basic Usage
 
