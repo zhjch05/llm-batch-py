@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 import polars as pl
 import pytest
 
-from llm_batch_py.catalog import MANIFEST_BATCHES, ParquetCatalog
+from llm_batch_py.catalog import MANIFEST_BATCHES, MANIFEST_RESULTS, ParquetCatalog
 from llm_batch_py.jobs import LockConfig, ResultCacheStoreConfig
 
 
@@ -113,6 +113,62 @@ def test_catalog_reads_append_only_manifest_chunks(tmp_path) -> None:
 
     assert frame["batch_id"].to_list() == ["b1", "b2"]
     assert len(catalog._manifest_paths(MANIFEST_BATCHES)) == 2
+
+
+def test_catalog_appends_result_rows_when_nullable_fields_become_populated_late(tmp_path) -> None:
+    catalog = ParquetCatalog(ResultCacheStoreConfig(root_uri=str(tmp_path / "catalog")))
+    rows = [
+        {
+            "event_at": "2025-01-01T00:00:00+00:00",
+            "job_name": "job",
+            "batch_id": "batch-1",
+            "request_id": f"request-{index}",
+            "custom_id": f"custom-{index}",
+            "cache_key": f"cache-{index}",
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "endpoint_kind": "structured_output",
+            "status": "completed",
+            "error_code": None,
+            "row_key_json": '{"product_id":"p-1"}',
+            "parsed_json": '{"best_name":"Widget"}',
+            "raw_json": '{"result":{"type":"succeeded"}}',
+            "raw_output_text": '{"best_name":"Widget"}',
+            "input_tokens": 12,
+            "output_tokens": 4,
+        }
+        for index in range(100)
+    ]
+    rows.append(
+        {
+            "event_at": "2025-01-01T00:01:00+00:00",
+            "job_name": "job",
+            "batch_id": "batch-1",
+            "request_id": "request-100",
+            "custom_id": "custom-100",
+            "cache_key": "cache-100",
+            "provider": "anthropic",
+            "model": "claude-haiku-4-5-20251001",
+            "endpoint_kind": "structured_output",
+            "status": "failed",
+            "error_code": "error",
+            "row_key_json": '{"product_id":"p-2"}',
+            "parsed_json": None,
+            "raw_json": '{"result":{"type":"error"}}',
+            "raw_output_text": None,
+            "input_tokens": None,
+            "output_tokens": None,
+        }
+    )
+
+    catalog.append_manifest(MANIFEST_RESULTS, rows)
+
+    frame = catalog.read_manifest(MANIFEST_RESULTS).sort("request_id")
+    failed_row = frame.filter(pl.col("request_id") == "request-100").to_dicts()[0]
+
+    assert frame.height == 101
+    assert frame["error_code"].null_count() == 100
+    assert failed_row["error_code"] == "error"
 
 
 def test_catalog_reads_legacy_single_manifest_file(tmp_path) -> None:

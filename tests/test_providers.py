@@ -51,6 +51,43 @@ class FakeAnthropicClient:
         self.messages = FakeAnthropicMessages(items)
 
 
+def test_anthropic_fetch_results_extracts_nested_error_code(structured_job) -> None:
+    adapter = AnthropicStructuredAdapter.__new__(AnthropicStructuredAdapter)
+    adapter.config = structured_job.provider
+    adapter.client = FakeAnthropicClient(
+        [
+            FakeAnthropicItem(
+                custom_id="too-long",
+                payload={
+                    "custom_id": "too-long",
+                    "result": {
+                        "type": "errored",
+                        "error": {
+                            "type": "error",
+                            "error": {
+                                "details": {"error_visibility": "user_facing"},
+                                "type": "invalid_request_error",
+                                "message": "prompt is too long: 201148 tokens > 200000 maximum",
+                            },
+                            "request_id": "workerreq_123",
+                        },
+                    },
+                },
+            )
+        ]
+    )
+
+    results = adapter.fetch_results(
+        structured_job,
+        BatchSnapshot(status="ended", raw_payload={}),
+        "provider-1",
+    )
+
+    assert [result.status for result in results] == ["failed"]
+    assert results[0].error_code == "invalid_request_error"
+    assert results[0].parsed_output is None
+
+
 def test_openai_prepare_requests_builds_structured_transport_records(structured_job) -> None:
     adapter = OpenAIBatchAdapter.__new__(OpenAIBatchAdapter)
     adapter.config = structured_job.provider

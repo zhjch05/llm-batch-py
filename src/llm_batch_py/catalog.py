@@ -18,6 +18,69 @@ MANIFEST_BATCHES = "batches"
 MANIFEST_REQUESTS = "requests"
 MANIFEST_RESULTS = "results"
 
+_MANIFEST_SCHEMA_OVERRIDES: dict[str, dict[str, pl.DataType]] = {
+    MANIFEST_RUNS: {
+        "event_at": pl.String,
+        "job_name": pl.String,
+        "run_id": pl.String,
+        "dry_run": pl.Boolean,
+    },
+    MANIFEST_BATCHES: {
+        "event_at": pl.String,
+        "created_at": pl.String,
+        "job_name": pl.String,
+        "batch_id": pl.String,
+        "provider_batch_id": pl.String,
+        "provider": pl.String,
+        "model": pl.String,
+        "endpoint_kind": pl.String,
+        "status": pl.String,
+        "request_count": pl.Int64,
+        "artifact_uri": pl.String,
+        "raw_json": pl.String,
+        "submit_attempts": pl.Int64,
+        "results_ingested_at": pl.String,
+        "output_artifact": pl.String,
+        "error_artifact": pl.String,
+    },
+    MANIFEST_REQUESTS: {
+        "event_at": pl.String,
+        "created_at": pl.String,
+        "job_name": pl.String,
+        "request_id": pl.String,
+        "batch_id": pl.String,
+        "custom_id": pl.String,
+        "cache_key": pl.String,
+        "provider": pl.String,
+        "model": pl.String,
+        "endpoint_kind": pl.String,
+        "row_key_json": pl.String,
+        "payload_json": pl.String,
+        "transport_record_json": pl.String,
+        "prompt_version": pl.String,
+        "status": pl.String,
+    },
+    MANIFEST_RESULTS: {
+        "event_at": pl.String,
+        "job_name": pl.String,
+        "batch_id": pl.String,
+        "request_id": pl.String,
+        "custom_id": pl.String,
+        "cache_key": pl.String,
+        "provider": pl.String,
+        "model": pl.String,
+        "endpoint_kind": pl.String,
+        "status": pl.String,
+        "error_code": pl.String,
+        "row_key_json": pl.String,
+        "parsed_json": pl.String,
+        "raw_json": pl.String,
+        "raw_output_text": pl.String,
+        "input_tokens": pl.Int64,
+        "output_tokens": pl.Int64,
+    },
+}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -71,7 +134,11 @@ class ParquetCatalog:
         path = self._manifest_chunk_path(name)
         self.fs.makedirs(str(PurePosixPath(path).parent), exist_ok=True)
         with self.fs.open(path, "wb") as handle:
-            pl.DataFrame(rows).write_parquet(handle)
+            pl.from_dicts(
+                rows,
+                schema_overrides=_MANIFEST_SCHEMA_OVERRIDES.get(name),
+                infer_schema_length=None,
+            ).write_parquet(handle)
 
     def write_artifact(self, relative_path: str, payload: bytes) -> str:
         path = self._path(relative_path)

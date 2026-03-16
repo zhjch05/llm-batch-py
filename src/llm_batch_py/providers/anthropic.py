@@ -131,7 +131,7 @@ class AnthropicStructuredAdapter(ProviderAdapter):
                     )
                 )
                 continue
-            error_code = result.get("error", {}).get("type") or result["type"]
+            error_code = _anthropic_error_code(result)
             results.append(
                 ProviderResult(
                     custom_id=item.custom_id,
@@ -197,6 +197,23 @@ def _normalize_structured_payload(payload: dict[str, Any] | str) -> dict[str, An
     if "messages" in payload:
         return dict(payload)
     raise ValueError("Structured prompt builders must return a string or a dict with messages")
+
+
+def _anthropic_error_code(result: dict[str, Any]) -> str:
+    error_obj = result.get("error")
+    if isinstance(error_obj, dict):
+        nested_error = error_obj.get("error")
+        if isinstance(nested_error, dict):
+            nested_type = nested_error.get("type")
+            if isinstance(nested_type, str) and nested_type:
+                return nested_type
+        error_type = error_obj.get("type")
+        if isinstance(error_type, str) and error_type:
+            return error_type
+    result_type = result.get("type")
+    if isinstance(result_type, str) and result_type:
+        return result_type
+    return "unknown_error"
 
 
 def _anthropic_message_text(message: dict[str, Any]) -> str:
