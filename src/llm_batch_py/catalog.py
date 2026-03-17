@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import PurePosixPath
@@ -12,6 +13,8 @@ import fsspec
 import polars as pl
 
 from llm_batch_py.jobs import LockConfig, ResultCacheStoreConfig
+
+logger = logging.getLogger(__name__)
 
 MANIFEST_RUNS = "runs"
 MANIFEST_BATCHES = "batches"
@@ -123,9 +126,23 @@ class ParquetCatalog:
         if not paths:
             return pl.DataFrame()
         frames: list[pl.DataFrame] = []
+        read_errors: list[tuple[str, Exception]] = []
         for path in paths:
-            with self.fs.open(path, "rb") as handle:
-                frames.append(pl.read_parquet(handle))
+            try:
+                with self.fs.open(path, "rb") as handle:
+                    frames.append(pl.read_parquet(handle))
+            except Exception as exc:
+                read_errors.append((path, exc))
+                logger.warning(
+                    "Skipping unreadable manifest chunk %s for %s: %s",
+                    self._qualify(path),
+                    name,
+                    exc,
+                )
+        if not frames:
+            if read_errors:
+                raise read_errors[0][1]
+            return pl.DataFrame()
         return pl.concat(frames, how="diagonal_relaxed") if len(frames) > 1 else frames[0]
 
     def append_manifest(self, name: str, rows: list[dict[str, Any]]) -> None:

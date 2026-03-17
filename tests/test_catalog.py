@@ -204,6 +204,44 @@ def test_catalog_reads_legacy_single_manifest_file(tmp_path) -> None:
     assert len(catalog._manifest_paths(MANIFEST_BATCHES)) == 2
 
 
+def test_catalog_skips_corrupt_manifest_chunks_when_valid_chunks_exist(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    catalog = ParquetCatalog(ResultCacheStoreConfig(root_uri=str(tmp_path / "catalog")))
+    catalog.append_manifest(
+        MANIFEST_BATCHES,
+        [
+            {
+                "event_at": "2025-01-01T00:00:00+00:00",
+                "job_name": "job",
+                "batch_id": "valid",
+                "status": "submitted",
+            }
+        ],
+    )
+    corrupt_path = catalog._manifest_chunk_path(MANIFEST_BATCHES)
+    catalog.fs.makedirs(str(PurePosixPath(corrupt_path).parent), exist_ok=True)
+    with catalog.fs.open(corrupt_path, "wb") as handle:
+        handle.write(b"bad")
+
+    with caplog.at_level("WARNING"):
+        frame = catalog.read_manifest(MANIFEST_BATCHES)
+
+    assert frame["batch_id"].to_list() == ["valid"]
+    assert "Skipping unreadable manifest chunk" in caplog.text
+
+
+def test_catalog_raises_when_all_manifest_chunks_are_corrupt(tmp_path) -> None:
+    catalog = ParquetCatalog(ResultCacheStoreConfig(root_uri=str(tmp_path / "catalog")))
+    corrupt_path = catalog._manifest_chunk_path(MANIFEST_BATCHES)
+    catalog.fs.makedirs(str(PurePosixPath(corrupt_path).parent), exist_ok=True)
+    with catalog.fs.open(corrupt_path, "wb") as handle:
+        handle.write(b"bad")
+
+    with pytest.raises(Exception, match="parquet|File out of specification"):
+        catalog.read_manifest(MANIFEST_BATCHES)
+
+
 def test_release_lock_preserves_newer_owner(tmp_path) -> None:
     catalog = ParquetCatalog(ResultCacheStoreConfig(root_uri=str(tmp_path / "catalog")))
     lock = catalog.acquire_lock("job", "run-1")
