@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 from uuid import uuid4
 
 import orjson
@@ -63,6 +64,61 @@ RETRYABLE_ERROR_CODES = {
 ACTIVE_BATCH_STATUSES = {"in_progress", "validating", "finalizing", "queued", "submitted"}
 TERMINAL_BATCH_STATUSES = {"ended", "completed"}
 INLINE_SUBMIT_RETRY_ATTEMPTS = 2
+
+_RESULT_METADATA_SCHEMA_OVERRIDES: dict[str, pl.DataType] = {
+    "llm_batch_py_status": pl.String,
+    "llm_batch_py_batch_id": pl.String,
+    "llm_batch_py_provider": pl.String,
+    "llm_batch_py_model": pl.String,
+    "llm_batch_py_input_tokens": pl.Int64,
+    "llm_batch_py_output_tokens": pl.Int64,
+    "llm_batch_py_input_raw_json": pl.String,
+    "llm_batch_py_request_raw_json": pl.String,
+    "llm_batch_py_output_raw_json": pl.String,
+    "llm_batch_py_output_raw_text": pl.String,
+    "llm_batch_py_error_code": pl.String,
+    "llm_batch_py_error_raw_json": pl.String,
+    "llm_batch_py_result_cached": pl.Boolean,
+    "llm_batch_py_cached": pl.Boolean,
+    "llm_batch_py_updated_at": pl.String,
+}
+
+_SIMPLE_PYTHON_TO_POLARS: dict[type[Any], pl.DataType] = {
+    str: pl.String,
+    int: pl.Int64,
+    float: pl.Float64,
+    bool: pl.Boolean,
+}
+
+
+def _annotation_to_polars_dtype(annotation: Any) -> pl.DataType | None:
+    if annotation in _SIMPLE_PYTHON_TO_POLARS:
+        return _SIMPLE_PYTHON_TO_POLARS[annotation]
+
+    origin = get_origin(annotation)
+    if origin is None:
+        return None
+
+    if origin is Literal:
+        literal_types = {type(value) for value in get_args(annotation) if value is not None}
+        if len(literal_types) != 1:
+            return None
+        return _SIMPLE_PYTHON_TO_POLARS.get(next(iter(literal_types)))
+
+    if origin in (list,):
+        args = get_args(annotation)
+        if len(args) != 1:
+            return None
+        inner_dtype = _annotation_to_polars_dtype(args[0])
+        return pl.List(inner_dtype) if inner_dtype is not None else None
+
+    if origin in (Union, UnionType):
+        non_none_args = tuple(arg for arg in get_args(annotation) if arg is not type(None))
+        if len(non_none_args) != 1:
+            return None
+        return _annotation_to_polars_dtype(non_none_args[0])
+
+    return None
 
 
 @dataclass(frozen=True)
@@ -800,9 +856,55 @@ class Runner:
             output_row.update({column: state.get(column) for column in metadata_columns})
             output_rows.append(output_row)
 
-        output_df = pl.DataFrame(output_rows)
+        output_df = pl.from_dicts(
+            output_rows,
+            schema_overrides=self._result_row_schema_overrides(
+                job,
+                input_df=input_df,
+                metadata_columns=metadata_columns,
+            ),
+            infer_schema_length=None,
+        )
         joined = input_df.join(output_df, on=list(job.key_cols), how="left")
         return joined.select([*input_df.columns, *output_columns, *metadata_columns])
+
+    def _result_row_schema_overrides(
+        self,
+        job: Job,
+        *,
+        input_df: pl.DataFrame,
+        metadata_columns: Sequence[str],
+    ) -> dict[str, pl.DataType]:
+        overrides: dict[str, pl.DataType] = {
+            column: dtype for column, dtype in input_df.schema.items() if column in job.key_cols
+        }
+        overrides.update(self._output_schema_overrides(job))
+        overrides.update(
+            {
+                column: _RESULT_METADATA_SCHEMA_OVERRIDES[column]
+                for column in metadata_columns
+                if column in _RESULT_METADATA_SCHEMA_OVERRIDES
+            }
+        )
+        return overrides
+
+    def _output_schema_overrides(self, job: Job) -> dict[str, pl.DataType]:
+        if isinstance(job, EmbeddingJob):
+            return {
+                "embedding": pl.List(pl.Float64),
+                "embedding_dim": pl.Int64,
+            }
+
+        return {
+            column_name: dtype
+            for field_name, column_name in structured_output_result_column_map(job).items()
+            if (
+                dtype := _annotation_to_polars_dtype(
+                    job.output_model.model_fields[field_name].annotation
+                )
+            )
+            is not None
+        }
 
     def _completed_row_state(
         self,

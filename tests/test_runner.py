@@ -772,6 +772,65 @@ def test_runner_metadata_columns_can_select_failure_metadata_only(
     assert result["llm_batch_py_error_raw_json"].to_list()[0] is not None
 
 
+def test_runner_materializes_large_chunks_with_late_schema_validation_failure(
+    monkeypatch, structured_job
+) -> None:
+    adapter = FakeAdapter()
+    monkeypatch.setattr(Runner, "_adapter", lambda self, job: adapter)
+    runner = Runner()
+    job = structured_job.__class__(
+        **{
+            **structured_job.__dict__,
+            "input_df": pl.DataFrame(
+                {
+                    "id": list(range(1, 103)),
+                    "text": [f"value-{row_id}" for row_id in range(1, 103)],
+                }
+            ),
+        }
+    )
+
+    runner.run(job)
+    custom_ids = [request["custom_id"] for request in next(iter(adapter.batches.values())).requests]
+    adapter.complete_all(outcomes={custom_ids[-1]: FakeOutcome(kind="malformed")})
+
+    result = runner.run(job)
+
+    assert result.height == 102
+    assert result["llm_batch_py_error_code"].null_count() == 101
+    assert result["llm_batch_py_error_code"].to_list()[-1] == "schema_validation_error"
+    assert result["llm_batch_py_status"].to_list()[-1] == "failed"
+    assert result["llm_batch_py_error_raw_json"].to_list()[-1] is not None
+
+
+def test_runner_materializes_mixed_success_and_failure_metadata_with_stable_types(
+    monkeypatch, structured_job
+) -> None:
+    adapter = FakeAdapter()
+    monkeypatch.setattr(Runner, "_adapter", lambda self, job: adapter)
+    runner = Runner()
+
+    runner.run(structured_job)
+    custom_ids = [request["custom_id"] for request in next(iter(adapter.batches.values())).requests]
+    adapter.complete_all(
+        outcomes={
+            custom_ids[0]: FakeOutcome(kind="failed", error_code="invalid_request"),
+            custom_ids[1]: FakeOutcome(kind="completed"),
+        }
+    )
+
+    result = runner.run(structured_job)
+
+    assert result.schema["llm_batch_py_status"] == pl.String
+    assert result.schema["llm_batch_py_error_code"] == pl.String
+    assert result.schema["llm_batch_py_input_tokens"] == pl.Int64
+    assert result.schema["llm_batch_py_output_tokens"] == pl.Int64
+    assert result.schema["llm_batch_py_result_cached"] == pl.Boolean
+    assert result.schema["llm_batch_py_cached"] == pl.Boolean
+    assert result["llm_batch_py_status"].to_list() == ["failed", "cached"]
+    assert result["llm_batch_py_error_code"].to_list() == ["invalid_request", None]
+
+
 def test_runner_preserves_non_retryable_submit_failures_on_rerun(
     monkeypatch, structured_job
 ) -> None:
